@@ -1,6 +1,8 @@
 #include "mpi.h"
 #include <stdio.h>
 #include <stdlib.h>
+#include <unistd.h>
+
 
 #define MAXSIZE 65536 // 2^16
 
