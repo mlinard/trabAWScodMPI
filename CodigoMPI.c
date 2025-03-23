@@ -1,97 +1,89 @@
-#include "mpi.h"    // Biblioteca MPI
-#include <stdio.h>   // Biblioteca para entrada/saída
-#include <stdlib.h>  // Biblioteca para funções utilitárias (ex: exit())
-#include <unistd.h>  // Biblioteca para manipulação do sistema (ex: gethostname())
+#include <stdio.h>
+#include <stdlib.h>
+#include <mpi.h>
+#include <time.h>
 
+#define N 65536  // 2^16 elementos no vetor
+#define TAG 0
 
-#define MAXSIZE 65536 // Tamanho do vetor 2^16
+// Função para gerar um vetor de números únicos
+void gerar_vetor_unico(int *vetor, int tamanho) {
+    int i, j, num;
+    srand(time(NULL));
 
-// Função para carregar o vetor de um arquivo CSV
-void carregar_vetor(char *arquivo, int *vetor, int *tam) {
-    FILE *f = fopen(arquivo, "r");
-    if (f == NULL) {
-        printf("Erro ao abrir o arquivo %s\n", arquivo);
-        MPI_Abort(MPI_COMM_WORLD, 1);
+    for (i = 0; i < tamanho; i++) {
+        num = rand() % 1000000;
+        for (j = 0; j < i; j++) {
+            if (vetor[j] == num) {
+                num = rand() % 1000000;
+                j = -1;  // Refaz a checagem
+            }
+        }
+        vetor[i] = num;
     }
-    int i = 0;
-    while (fscanf(f, "%d", &vetor[i]) != EOF && i < MAXSIZE) {
-        i++;
-    }
-    *tam = i;
-    fclose(f);
 }
 
-// Função para realizar a busca sequencial
-int busca_sequencial(int *vetor, int tam, int valor) {
-    for (int i = 0; i < tam; i++) {
+// Função para buscar um elemento no vetor
+int buscar_elemento(int *vetor, int tamanho, int valor) {
+    for (int i = 0; i < tamanho; i++) {
         if (vetor[i] == valor) {
-            return i;
+            return i + 1;  // Retorna a posição baseada em 1
         }
     }
-    return -1;
+    return -1;  // Retorna -1 se não encontrar o valor
 }
 
 int main(int argc, char *argv[]) {
-    int rank, size;
-    int vetor1[MAXSIZE], vetor2[MAXSIZE];
-    int tam1, tam2;
-    int valor_buscado;
-    int resultado = -1;
+    int myid, numprocs;
+    int *vetor;
+    int valor_a_buscar = 10;  // Exemplo de valor a ser buscado
+    int tamanho_vetor = N;
+    int inicio, fim, resultado_local, resultado_global;
+    char hostname[30];
 
-    // Inicialização do MPI
+    // Inicializa o ambiente MPI
     MPI_Init(&argc, &argv);
-    MPI_Comm_rank(MPI_COMM_WORLD, &rank);
-    MPI_Comm_size(MPI_COMM_WORLD, &size);
+    MPI_Comm_rank(MPI_COMM_WORLD, &myid);
+    MPI_Comm_size(MPI_COMM_WORLD, &numprocs);
+    gethostname(hostname, 30);
 
-    if (rank == 0) {
-        // Solicitar entrada do número a ser buscado
-        printf("Digite o valor a ser buscado no vetor: ");
-        fflush(stdout);
-        scanf("%d", &valor_buscado);
-        
-        // Mostrar o valor que será buscado
-        printf("Valor a ser buscado: %d\n", valor_buscado);
+    // O processo master (myid == 0) inicializa o vetor
+    if (myid == 0) {
+        vetor = (int*) malloc(tamanho_vetor * sizeof(int));
+        gerar_vetor_unico(vetor, tamanho_vetor);  // Gera o vetor com valores únicos
     }
 
-    // Dividir a carga de trabalho (os arquivos) entre os processos
-    if (rank == 0) {
-        carregar_vetor("vetor1.csv", vetor1, &tam1);
-        printf("Processo %d carregou o vetor1.csv com %d elementos.\n", rank, tam1);
-    } else if (rank == 1) {
-        carregar_vetor("vetor2.csv", vetor2, &tam2);
-        printf("Processo %d carregou o vetor2.csv com %d elementos.\n", rank, tam2);
+    // Distribui o vetor para todos os processos
+    MPI_Bcast(vetor, tamanho_vetor, MPI_INT, 0, MPI_COMM_WORLD);
+
+    // Divisão do trabalho: cada processo vai procurar uma parte do vetor
+    int chunk_size = tamanho_vetor / numprocs;
+    inicio = myid * chunk_size;
+    fim = (myid + 1) * chunk_size;
+
+    if (myid == numprocs - 1) {
+        fim = tamanho_vetor;  // O último processo pega o restante do vetor
     }
 
-    // Sincronizar os processos para garantir que todos tenham carregado os dados
-    MPI_Barrier(MPI_COMM_WORLD);
+    // Busca o valor no intervalo de cada processo
+    resultado_local = buscar_elemento(vetor + inicio, fim - inicio, valor_a_buscar);
 
-    // Realizar a busca no vetor correspondente ao processo
-    if (rank == 0) {
-        resultado = busca_sequencial(vetor1, tam1, valor_buscado);
-        if (resultado != -1) {
-            printf("Processo %d encontrou o valor %d no vetor1.csv, na posição %d.\n", rank, valor_buscado, resultado);
-        }
-    } else if (rank == 1) {
-        resultado = busca_sequencial(vetor2, tam2, valor_buscado);
-        if (resultado != -1) {
-            printf("Processo %d encontrou o valor %d no vetor2.csv, na posição %d.\n", rank, valor_buscado, resultado);
-        }
-    }
+    // O processo master coleta os resultados e imprime o primeiro encontrado
+    MPI_Reduce(&resultado_local, &resultado_global, 1, MPI_INT, MPI_MIN, 0, MPI_COMM_WORLD);
 
-    // Reduzir o resultado (encontrar a posição do valor no vetor) no processo master
-    int posicao_final = -1;
-    MPI_Reduce(&resultado, &posicao_final, 1, MPI_INT, MPI_MAX, 0, MPI_COMM_WORLD);
-
-    // O processo mestre imprime a posição do valor encontrado
-    if (rank == 0) {
-        if (posicao_final != -1) {
-            printf("O valor %d foi encontrado na posição %d.\n", valor_buscado, posicao_final);
+    if (myid == 0) {
+        if (resultado_global != -1) {
+            printf("O valor foi encontrado na linha %d.\n", resultado_global);
         } else {
-            printf("O valor %d não foi encontrado nos vetores.\n", valor_buscado);
+            printf("O valor não foi encontrado no vetor.\n");
         }
     }
 
-    // Finalizar o MPI
+    // Libera a memória e finaliza o MPI
+    if (myid == 0) {
+        free(vetor);
+    }
+
     MPI_Finalize();
     return 0;
 }
