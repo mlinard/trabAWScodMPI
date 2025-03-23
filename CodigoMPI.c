@@ -23,13 +23,14 @@ void carregar_vetor(char *arquivo, int *vetor, int *tam) {
 }
 
 // Função para realizar a busca sequencial
-int busca_sequencial(int *vetor, int tam, int valor) {
+int busca_sequencial(int *vetor, int tam, int valor, int *posicoes) {
+    int count = 0;
     for (int i = 0; i < tam; i++) {
         if (vetor[i] == valor) {
-            return i;
+            posicoes[count++] = i + 1; // Ajusta para índice baseado em 1
         }
     }
-    return -1;
+    return count; // Retorna o número de ocorrências encontradas
 }
 
 int main(int argc, char *argv[]) {
@@ -37,7 +38,8 @@ int main(int argc, char *argv[]) {
     int vetor1[MAXSIZE], vetor2[MAXSIZE];
     int tam1, tam2;
     int valor_buscado;
-    int resultado = -1;
+    int posicoes1[MAXSIZE], posicoes2[MAXSIZE]; // Para armazenar as posições encontradas
+    int num_encontrados1 = 0, num_encontrados2 = 0;
 
     // Inicialização do MPI
     MPI_Init(&argc, &argv);
@@ -68,28 +70,39 @@ int main(int argc, char *argv[]) {
 
     // Realizar a busca no vetor correspondente ao processo
     if (rank == 0) {
-        resultado = busca_sequencial(vetor1, tam1, valor_buscado);
-        if (resultado != -1) {
-            printf("Processo %d encontrou o valor %d no vetor1.csv, na posição %d.\n", rank, valor_buscado, resultado);
-        }
+        num_encontrados1 = busca_sequencial(vetor1, tam1, valor_buscado, posicoes1);
     } else if (rank == 1) {
-        resultado = busca_sequencial(vetor2, tam2, valor_buscado);
-        if (resultado != -1) {
-            printf("Processo %d encontrou o valor %d no vetor2.csv, na posição %d.\n", rank, valor_buscado, resultado);
-        }
+        num_encontrados2 = busca_sequencial(vetor2, tam2, valor_buscado, posicoes2);
     }
 
-    // ------------------------ Alteração solicitada para ajuste da linha
-    // Reduzir o resultado (encontrar a posição do valor no vetor) no processo master
-    int posicao_final = -1;
-    MPI_Reduce(&resultado, &posicao_final, 1, MPI_INT, MPI_MAX, 0, MPI_COMM_WORLD);
+    // Reduzir as posições encontradas
+    int posicoes_finais1[MAXSIZE]; // Para armazenar as posições do vetor 1
+    int posicoes_finais2[MAXSIZE]; // Para armazenar as posições do vetor 2
+    MPI_Gather(posicoes1, num_encontrados1, MPI_INT, posicoes_finais1, MAXSIZE, MPI_INT, 0, MPI_COMM_WORLD);
+    MPI_Gather(posicoes2, num_encontrados2, MPI_INT, posicoes_finais2, MAXSIZE, MPI_INT, 0, MPI_COMM_WORLD);
 
-    // O processo mestre imprime a posição do valor encontrado, ajustada
+    // O processo mestre imprime as posições dos valores encontrados nos dois vetores
     if (rank == 0) {
-        if (posicao_final != -1) {
-            printf("O valor %d foi encontrado na posição %d.\n", valor_buscado, posicao_final + 1); // Aqui é onde fazemos o ajuste de +1 na posição
+        // Resultados para o vetor1
+        if (num_encontrados1 > 0) {
+            printf("Valor encontrado no vetor1.csv: ");
+            for (int i = 0; i < num_encontrados1; i++) {
+                printf("%d ", posicoes_finais1[i]);
+            }
+            printf("\n");
         } else {
-            printf("O valor %d não foi encontrado nos vetores.\n", valor_buscado);
+            printf("Valor não encontrado no vetor1.csv.\n");
+        }
+
+        // Resultados para o vetor2
+        if (num_encontrados2 > 0) {
+            printf("Valor encontrado no vetor2.csv: ");
+            for (int i = 0; i < num_encontrados2; i++) {
+                printf("%d ", posicoes_finais2[i]);
+            }
+            printf("\n");
+        } else {
+            printf("Valor não encontrado no vetor2.csv.\n");
         }
     }
 
