@@ -1,7 +1,10 @@
+#include "mpi.h"
 #include <stdio.h>
 #include <stdlib.h>
-#include <mpi.h>
+#include <unistd.h>  // Adicionada para corrigir o problema com gethostname
+#include <math.h>
 #include <time.h>
+
 
 #define N 65536  // 2^16 elementos no vetor
 #define TAG 0
